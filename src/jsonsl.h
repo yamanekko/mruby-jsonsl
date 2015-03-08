@@ -83,6 +83,17 @@ typedef int ssize_t;
 
 #define JSONSL_MAX_LEVELS 512
 
+#ifndef JSONSL_MALLOC
+#define JSONSL_MALLOC malloc
+#endif /* JSONSL_MALLOC */
+#ifndef JSONSL_CALLOC
+#define JSONSL_CALLOC calloc
+#endif /* JSONSL_CALLOC */
+#ifndef JSONSL_FREE
+#define JSONSL_FREE free
+#endif /* JSONSL_FREE */
+
+
 struct jsonsl_st;
 typedef struct jsonsl_st *jsonsl_t;
 

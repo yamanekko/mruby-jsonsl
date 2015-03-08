@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <ctype.h>
 
+
 #ifdef JSONSL_USE_METRICS
 #define XMETRICS \
     X(STRINGY_INSIGNIFICANT) \
@@ -100,7 +101,7 @@ JSONSL_API
 jsonsl_t jsonsl_new(int nlevels)
 {
     struct jsonsl_st *jsn = (struct jsonsl_st *)
-            calloc(1, sizeof (*jsn) +
+            JSONSL_CALLOC(1, sizeof (*jsn) +
                     ( (nlevels-1) * sizeof (struct jsonsl_state_st) )
             );
 
@@ -133,7 +134,7 @@ JSONSL_API
 void jsonsl_destroy(jsonsl_t jsn)
 {
     if (jsn) {
-        free(jsn);
+        JSONSL_FREE(jsn);
     }
 }
 
@@ -696,12 +697,12 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
     }
 
     components = (struct jsonsl_jpr_component_st *)
-            malloc(sizeof(*components) * count);
+            JSONSL_MALLOC(sizeof(*components) * count);
     if (!components) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
 
-    my_copy = (char *)malloc(strlen(path) + 1);
+    my_copy = (char *)JSONSL_MALLOC(strlen(path) + 1);
     if (!my_copy) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
@@ -732,11 +733,11 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
 
     path--; /*revert path to leading '/' */
     origlen = strlen(path) + 1;
-    ret = (struct jsonsl_jpr_st *)malloc(sizeof(*ret));
+    ret = (struct jsonsl_jpr_st *)JSONSL_MALLOC(sizeof(*ret));
     if (!ret) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
-    ret->orig = (char *)malloc(origlen);
+    ret->orig = (char *)JSONSL_MALLOC(origlen);
     if (!ret->orig) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
@@ -749,22 +750,22 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
     return ret;
 
     GT_ERROR:
-    free(my_copy);
-    free(components);
+    JSONSL_FREE(my_copy);
+    JSONSL_FREE(components);
     if (ret) {
-        free(ret->orig);
+        JSONSL_FREE(ret->orig);
     }
-    free(ret);
+    JSONSL_FREE(ret);
     return NULL;
 #undef JPR_BAIL
 }
 
 void jsonsl_jpr_destroy(jsonsl_jpr_t jpr)
 {
-    free(jpr->components);
-    free(jpr->basestr);
-    free(jpr->orig);
-    free(jpr);
+    JSONSL_FREE(jpr->components);
+    JSONSL_FREE(jpr->basestr);
+    JSONSL_FREE(jpr->orig);
+    JSONSL_FREE(jpr);
 }
 
 JSONSL_API
@@ -852,9 +853,9 @@ void jsonsl_jpr_match_state_init(jsonsl_t jsn,
     if (njprs == 0) {
         return;
     }
-    jsn->jprs = (jsonsl_jpr_t *)malloc(sizeof(jsonsl_jpr_t) * njprs);
+    jsn->jprs = (jsonsl_jpr_t *)JSONSL_MALLOC(sizeof(jsonsl_jpr_t) * njprs);
     jsn->jpr_count = njprs;
-    jsn->jpr_root = (size_t*)calloc(1, sizeof(size_t) * njprs * jsn->levels_max);
+    jsn->jpr_root = (size_t*)JSONSL_CALLOC(1, sizeof(size_t) * njprs * jsn->levels_max);
     memcpy(jsn->jprs, jprs, sizeof(jsonsl_jpr_t) * njprs);
     /* Set the initial jump table values */
 
@@ -871,8 +872,8 @@ void jsonsl_jpr_match_state_cleanup(jsonsl_t jsn)
         return;
     }
 
-    free(jsn->jpr_root);
-    free(jsn->jprs);
+    JSONSL_FREE(jsn->jpr_root);
+    JSONSL_FREE(jsn->jprs);
     jsn->jprs = NULL;
     jsn->jpr_root = NULL;
     jsn->jpr_count = 0;
