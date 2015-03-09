@@ -1,27 +1,28 @@
 #include "mruby.h"
 #include "mruby/data.h"
+#include "mruby/class.h"
+#include "mruby/array.h"
+#include "mruby/hash.h"
+#include "mruby/value.h"
+#include "mruby/string.h"
 
-#define JSONSL_CALLOC mrb_calloc
-#define JSONSL_MALLOC mrb_malloc
+#define JSONSL_CALLOC(ptr) mrb_calloc((mrb), (ptr))
+#define JSONSL_MALLOC(ptr) mrb_malloc((mrb), (ptr))
+#define JSONSL_FREE(ptr)   mrb_free((mrb), (ptr))
 #define JSONSL_STATE_USER_FIELDS mrb_value mrb_data;
 
 #include "jsonsl.h"
-
+#include "mruby-jsonsl.h"
 
 const static struct mrb_data_type mrb_jsonsl_type = {
   "JSONSL",
   mrb_mruby_jsonsl_free,
 };
 
-typedef struct mrb_jsonsl_data {
-  mrb_state *mrb;
-  mrb_value result;
-} mrb_jsonsl_data;
-
 static int MAX_DESCENT_LEVEL = 20;
 static int MAX_JSON_SIZE = 0x1000;
 
-#define MRB_JSONSL_PENDING_KEY mrb_intern_lit(mrb, "pending_key")
+#define MRB_JSONSL_PENDING_KEY mrb_sym2str(mrb, mrb_intern_lit(mrb, "pending_key"))
 
 static inline void
 set_pending_key(mrb_state *mrb, mrb_value hash, mrb_value value)
@@ -38,11 +39,11 @@ remove_pending_key(mrb_state *mrb, mrb_value hash)
 static inline mrb_value
 get_pending_key(mrb_state *mrb, mrb_value hash)
 {
-  mrb_hash_get(mrb, hash, MRB_JSONSL_PENDING_KEY);
+  return mrb_hash_get(mrb, hash, MRB_JSONSL_PENDING_KEY);
 }
 
-static inline void
-add_to_hash(mrb_value parent, mrb_value value)
+static void
+add_to_hash(mrb_state *mrb, mrb_value parent, mrb_value value)
 {
   mrb_value pending_key = get_pending_key(mrb, parent);
   mrb_assert(mrb_test(pending_key));
@@ -50,7 +51,7 @@ add_to_hash(mrb_value parent, mrb_value value)
   remove_pending_key(mrb, parent);
 }
 
-static inline void
+static void
 add_to_list(mrb_state *mrb, mrb_value parent, mrb_value value)
 {
   mrb_ary_push(mrb, parent, value);
@@ -74,11 +75,12 @@ create_new_element(jsonsl_t jsn,
   switch(state->type) {
   case JSONSL_T_SPECIAL:
   case JSONSL_T_STRING: {
-    child = mrb_cptr_value(buf);
+    child = mrb_cptr_value(mrb, (void *)buf);
     break;
   }
   case JSONSL_T_HKEY: {
-    child = mrb_cptr_value(buf);
+    child = mrb_cptr_value(mrb, (void *)buf);
+    mrb_assert(mrb_hash_p(parent));
     set_pending_key(mrb, parent, child);
     break;
   }
@@ -95,7 +97,7 @@ create_new_element(jsonsl_t jsn,
     break;
   }
 
-  mrb_assert(child);
+  //mrb_assert(child);
   state->mrb_data = child;
 }
 
@@ -120,14 +122,16 @@ cleanup_closing_element(jsonsl_t jsn,
                         const char *at)
 {
   mrb_value parent = mrb_undef_value();
-  mrb_state *mrb = (mrb_state *)jsn->data;
+  mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
+  mrb_state *mrb = (mrb_state *)data->mrb;
+
+  mrb_value elem = state->mrb_data;
   struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
   if (last_state) {
     parent = last_state->mrb_data;
   }
 
   mrb_assert(state);
-  mrb_value elem = state->mrb_data;
 
   if (mrb_cptr_p(elem)) {
     /* String or Speical value */
@@ -140,14 +144,15 @@ cleanup_closing_element(jsonsl_t jsn,
   }
 
   if (!mrb_undef_p(parent)) {
-    if (parent->type == TYPE_LIST) {
+    if (mrb_array_p(parent)) {
       add_to_list(mrb, parent, elem);
-    } else if (parent->type == TYPE_HASH) {
+    } else if (mrb_hash_p(parent)) {
       /* ignore keys; do add only values */
       if (state->type != JSONSL_T_HKEY) {
         add_to_hash(mrb, parent, elem);
       }
     } else {
+      printf("parent-tt:%i\n", mrb_type(parent));
       mrb_raise(mrb, E_ARGUMENT_ERROR, "Requested to add to non-container parent type!");
     }
   }
@@ -159,7 +164,8 @@ nest_callback_initial(jsonsl_t jsn,
                       struct jsonsl_state_st *state,
                       const char *at)
 {
-  mrb_state *mrb = (mrb_state *)jsn->data;
+  mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
+  mrb_state *mrb = (mrb_state *)data->mrb;
 
   mrb_assert(action == JSONSL_ACTION_PUSH);
 
@@ -198,7 +204,7 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   char *str;
   int len;
   jsonsl_t jsn;
-  mrb_value result;
+  mrb_jsonsl_data *data;
 
   mrb_get_args(mrb, "s", &str, &len);
 
@@ -207,7 +213,7 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   jsonsl_reset(jsn);
 
   /* initialize jsn->data */
-  mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
+  data = (mrb_jsonsl_data *)jsn->data;
   data->result = mrb_undef_value();
 
   /* initalize callbacks */
@@ -221,10 +227,8 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   /* do parse */
   jsonsl_feed(jsn, str, len);
 
-  /* get result of parsing */
-  result = data->result;
-
-  return result;
+  /* return result of parsing */
+  return data->result;
 }
 
 static mrb_value
@@ -237,8 +241,9 @@ mrb_jsonsl_init(mrb_state *mrb, mrb_value self)
   data->result = mrb_undef_value(); /* result = undef */
 
   jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
-  DATA_TYPE(self) = &mrb_jsonsl_typey;
+  DATA_TYPE(self) = &mrb_jsonsl_type;
   DATA_PTR(self) = jsn;
+  jsn->data = data;
 
   return self;
 }
@@ -248,19 +253,21 @@ mrb_mruby_jsonsl_free(mrb_state *mrb, void *ptr)
 {
   jsonsl_t jsn = (jsonsl_t)ptr;
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
-  mrb_free(data);
+  mrb_free(mrb, data);
   jsonsl_destroy(jsn);
 }
 
 void
-mrb_mruby_jsonsl_gem_init(mrb_state* mrb) {
-  struct RClass *jsonsl = mrb_define_module(mrb, "JSONSL");
+mrb_mruby_jsonsl_gem_init(mrb_state* mrb)
+{
+  struct RClass *jsonsl = mrb_define_class(mrb, "JSONSL", mrb->object_class);
   MRB_SET_INSTANCE_TT(jsonsl, MRB_TT_DATA);
-  mrb_define_class_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_NONE());
+  mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_NONE());
   mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_REQ(1));
 }
 
 void
-mrb_mruby_jsonsl_gem_final(mrb_state* mrb) {
+mrb_mruby_jsonsl_gem_final(mrb_state* mrb)
+{
   /* finalizer */
 }
