@@ -1,4 +1,4 @@
-MRuby::Gem::Specification.new('jsonsl') do |spec|
+MRuby::Gem::Specification.new('mruby-jsonsl') do |spec|
   spec.license = 'MIT'
   spec.author  = 'Masayoshi Takahashi'
 
