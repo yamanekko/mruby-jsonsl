@@ -9,6 +9,7 @@
 #define JSONSL_CALLOC(ptr) mrb_calloc((mrb), (ptr))
 #define JSONSL_MALLOC(ptr) mrb_malloc((mrb), (ptr))
 #define JSONSL_FREE(ptr)   mrb_free((mrb), (ptr))
+#undef  JSONSL_STATE_GENERIC
 #define JSONSL_STATE_USER_FIELDS mrb_value mrb_data;
 
 #include "jsonsl.h"
@@ -20,7 +21,7 @@ const static struct mrb_data_type mrb_jsonsl_type = {
 };
 
 static int MAX_DESCENT_LEVEL = 20;
-static int MAX_JSON_SIZE = 0x1000;
+static int MAX_JSON_SIZE = 0x100;
 
 #define MRB_JSONSL_PENDING_KEY mrb_sym2str(mrb, mrb_intern_lit(mrb, "pending_key"))
 
@@ -71,6 +72,12 @@ create_new_element(jsonsl_t jsn,
 
   struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
   parent = last_state->mrb_data;
+  printf("      state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
+  printf(" last_state:%p\n", last_state);
+  printf("l->mrb_data:%p\n", &(last_state->mrb_data));
+  printf("         tt:%x\n", (last_state->mrb_data).tt);
+  printf("     parent:%p\n", &parent);
+  printf("         tt:%x\n", parent.tt);
 
   switch(state->type) {
   case JSONSL_T_SPECIAL:
@@ -166,13 +173,16 @@ nest_callback_initial(jsonsl_t jsn,
 {
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
+  mrb_value value;
 
   mrb_assert(action == JSONSL_ACTION_PUSH);
 
   if (state->type == JSONSL_T_LIST) {
-    state->mrb_data = mrb_ary_new(mrb);
+    value = mrb_ary_new(mrb);
+    state->mrb_data = value;
   } else if (state->type == JSONSL_T_OBJECT) {
-    state->mrb_data = mrb_hash_new(mrb);
+    value = mrb_hash_new(mrb);
+    state->mrb_data = value;
   } else {
     mrb_raise(mrb, E_ARGUMENT_ERROR, "Type is neither Hash nor List");
   }
@@ -180,6 +190,14 @@ nest_callback_initial(jsonsl_t jsn,
   jsn->action_callback = NULL;
   jsn->action_callback_PUSH = create_new_element;
   jsn->action_callback_POP = cleanup_closing_element;
+  printf("\n init_state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
+  printf("sizeof(state):%ld\n", sizeof(struct jsonsl_state_st));
+  //  printf("state->data:%p\n", &value);
+  printf("         tt:%x\n", value.tt);
+  printf("s->mrb_data:%p\n", &(state->mrb_data));
+  printf("sizeof(m_d):%ld\n", sizeof(state->mrb_data));
+  printf("sizeof(val):%ld\n", sizeof(value));
+  printf("         tt:%x\n", state->mrb_data.tt);
 }
 
 int error_callback(jsonsl_t jsn,
