@@ -64,48 +64,47 @@ create_new_element(jsonsl_t jsn,
                    struct jsonsl_state_st *state,
                    const char *buf)
 {
-  mrb_value child;
   mrb_value parent;
+  mrb_value v;
 
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
   struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
   parent = last_state->mrb_data;
+  printf("--create_new_element\n");
   printf("      state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
   printf(" last_state:%p\n", last_state);
-  printf("l->mrb_data:%p\n", &(last_state->mrb_data));
-  printf("         tt:%x\n", (last_state->mrb_data).tt);
-  printf("     parent:%p\n", &parent);
+  printf("l->mrb_data:%x\n", last_state->mrb_data);
+  printf("l->mrb_d.tt:%x\n", (last_state->mrb_data).tt);
+  printf("     parent:%p\n", parent);
   printf("         tt:%x\n", parent.tt);
+  printf("        buf:%s\n", buf);
 
   switch(state->type) {
   case JSONSL_T_SPECIAL:
-  case JSONSL_T_STRING: {
-    child = mrb_cptr_value(mrb, (void *)buf);
+  case JSONSL_T_STRING:
+    state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
     break;
-  }
-  case JSONSL_T_HKEY: {
-    child = mrb_cptr_value(mrb, (void *)buf);
-    mrb_assert(mrb_hash_p(parent));
-    set_pending_key(mrb, parent, child);
+  case JSONSL_T_HKEY:
+    //child = mrb_cptr_value(mrb, (void *)buf);
+    //printf("(parent).tt=%d\n",(parent)->tt);
+    //mrb_assert(mrb_hash_p(parent));
+    //set_pending_key(mrb, parent, child);
+    state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
     break;
-  }
-  case JSONSL_T_LIST: {
-    child = mrb_ary_new(mrb);
+  case JSONSL_T_LIST:
+    state->mrb_data = mrb_ary_new(mrb);
     break;
-  }
-  case JSONSL_T_OBJECT: {
-    child = mrb_hash_new(mrb);
+  case JSONSL_T_OBJECT:
+    state->mrb_data = mrb_hash_new(mrb);
     break;
-  }
   default:
     mrb_raisef(mrb, E_TYPE_ERROR, "Unhandled type %c\n", state->type);
     break;
   }
 
   //mrb_assert(child);
-  state->mrb_data = child;
 }
 
 static mrb_value
@@ -118,6 +117,7 @@ create_special_value(mrb_state *mrb, const char *buf, mrb_int len)
   } else if ((len == 4) && (memcmp(buf, "null", len) == 0)) {
     return mrb_nil_value();
   } else {
+    printf("buf:'%s'(%d)\n",buf,len);
     mrb_raise(mrb, E_ARGUMENT_ERROR, "Ivalid special value");
   }
 }
@@ -128,34 +128,52 @@ cleanup_closing_element(jsonsl_t jsn,
                         struct jsonsl_state_st *state,
                         const char *at)
 {
-  mrb_value parent = mrb_undef_value();
+  mrb_value parent;
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
-  mrb_value elem = state->mrb_data;
+  mrb_value elem;
+  char *buf;
   struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
-  if (last_state) {
-    parent = last_state->mrb_data;
-  }
 
   mrb_assert(state);
 
-  if (mrb_cptr_p(elem)) {
+  switch(state->type) {
+  case JSONSL_T_SPECIAL:
+  case JSONSL_T_STRING:
     /* String or Speical value */
-    const char *buf = (const char *)mrb_cptr(elem);
-    if (*at != '"') {
-      elem = create_special_value(mrb, buf, at - buf);
-    } else {
+    buf = (char *)mrb_cptr(state->mrb_data);
+    if (*at == '"') {
       elem = mrb_str_new(mrb, buf+1, at - buf - 2);
+    } else {
+      elem = create_special_value(mrb, buf, at - buf);
     }
+    break;
+  case JSONSL_T_HKEY:
+    buf = (char *)mrb_cptr(state->mrb_data);
+    elem = mrb_str_new(mrb, buf+1, at - buf - 2);
+    break;
+  case JSONSL_T_LIST:
+  case JSONSL_T_OBJECT:
+    elem = state->mrb_data;
+    break;
+  default:
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "unknown value");
   }
 
-  if (!mrb_undef_p(parent)) {
+  if (!last_state) {
+    data->result = state->mrb_data;
+  } else if (last_state->type == JSONSL_T_LIST || last_state->type == JSONSL_T_OBJECT) {
+    printf("l_state->type:%x\n", last_state->type);
+    parent = last_state->mrb_data;
+    printf("l_s->mrb_data:%x\n", parent);
     if (mrb_array_p(parent)) {
       add_to_list(mrb, parent, elem);
     } else if (mrb_hash_p(parent)) {
       /* ignore keys; do add only values */
-      if (state->type != JSONSL_T_HKEY) {
+      if (state->type == JSONSL_T_HKEY) {
+        set_pending_key(mrb, parent, elem);
+      } else {
         add_to_hash(mrb, parent, elem);
       }
     } else {
@@ -183,6 +201,12 @@ nest_callback_initial(jsonsl_t jsn,
   } else if (state->type == JSONSL_T_OBJECT) {
     value = mrb_hash_new(mrb);
     state->mrb_data = value;
+    printf("mrb_p:");
+    mrb_p(mrb,value);
+    printf("mrb_p:");
+    mrb_p(mrb,state->mrb_data);
+    printf("   value.tt:%x\n", value.tt);
+    printf("   value.tt:%x\n", state->mrb_data.tt);
   } else {
     mrb_raise(mrb, E_ARGUMENT_ERROR, "Type is neither Hash nor List");
   }
@@ -192,12 +216,14 @@ nest_callback_initial(jsonsl_t jsn,
   jsn->action_callback_POP = cleanup_closing_element;
   printf("\n init_state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
   printf("sizeof(state):%ld\n", sizeof(struct jsonsl_state_st));
-  //  printf("state->data:%p\n", &value);
+  printf("state->type:%d\n",state->type);
+  printf("     &value:%p\n", &value);
   printf("         tt:%x\n", value.tt);
-  printf("s->mrb_data:%p\n", &(state->mrb_data));
+  printf("s->mrb_data:%x\n", state->mrb_data);
+  printf("s->data.tt :%x\n", state->mrb_data.tt);
   printf("sizeof(m_d):%ld\n", sizeof(state->mrb_data));
   printf("sizeof(val):%ld\n", sizeof(value));
-  printf("         tt:%x\n", state->mrb_data.tt);
+  mrb_p(mrb, value);
 }
 
 int error_callback(jsonsl_t jsn,
