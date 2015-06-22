@@ -64,22 +64,15 @@ create_new_element(jsonsl_t jsn,
                    struct jsonsl_state_st *state,
                    const char *buf)
 {
-  mrb_value parent;
   mrb_value v;
 
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
-  struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
-  parent = last_state->mrb_data;
-  printf("--create_new_element\n");
-  printf("      state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
-  printf(" last_state:%p\n", last_state);
-  printf("l->mrb_data:%x\n", last_state->mrb_data);
-  printf("l->mrb_d.tt:%x\n", (last_state->mrb_data).tt);
-  printf("     parent:%p\n", parent);
-  printf("         tt:%x\n", parent.tt);
-  printf("        buf:%s\n", buf);
+  if (state->level == 1 &&
+      ((state->type != JSONSL_T_LIST) && (state->type != JSONSL_T_OBJECT))) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "Toplevel element should be Hash or List");
+  }
 
   switch(state->type) {
   case JSONSL_T_SPECIAL:
@@ -87,10 +80,6 @@ create_new_element(jsonsl_t jsn,
     state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_HKEY:
-    //child = mrb_cptr_value(mrb, (void *)buf);
-    //printf("(parent).tt=%d\n",(parent)->tt);
-    //mrb_assert(mrb_hash_p(parent));
-    //set_pending_key(mrb, parent, child);
     state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_LIST:
@@ -103,8 +92,6 @@ create_new_element(jsonsl_t jsn,
     mrb_raisef(mrb, E_TYPE_ERROR, "Unhandled type %c\n", state->type);
     break;
   }
-
-  //mrb_assert(child);
 }
 
 static mrb_value
@@ -117,7 +104,6 @@ create_special_value(mrb_state *mrb, const char *buf, mrb_int len)
   } else if ((len == 4) && (memcmp(buf, "null", len) == 0)) {
     return mrb_nil_value();
   } else {
-    printf("buf:'%s'(%d)\n",buf,len);
     mrb_raise(mrb, E_ARGUMENT_ERROR, "Ivalid special value");
   }
 }
@@ -164,9 +150,7 @@ cleanup_closing_element(jsonsl_t jsn,
   if (!last_state) {
     data->result = state->mrb_data;
   } else if (last_state->type == JSONSL_T_LIST || last_state->type == JSONSL_T_OBJECT) {
-    printf("l_state->type:%x\n", last_state->type);
     parent = last_state->mrb_data;
-    printf("l_s->mrb_data:%x\n", parent);
     if (mrb_array_p(parent)) {
       add_to_list(mrb, parent, elem);
     } else if (mrb_hash_p(parent)) {
@@ -177,53 +161,9 @@ cleanup_closing_element(jsonsl_t jsn,
         add_to_hash(mrb, parent, elem);
       }
     } else {
-      printf("parent-tt:%i\n", mrb_type(parent));
       mrb_raise(mrb, E_ARGUMENT_ERROR, "Requested to add to non-container parent type!");
     }
   }
-}
-
-void
-nest_callback_initial(jsonsl_t jsn,
-                      jsonsl_action_t action,
-                      struct jsonsl_state_st *state,
-                      const char *at)
-{
-  mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
-  mrb_state *mrb = (mrb_state *)data->mrb;
-  mrb_value value;
-
-  mrb_assert(action == JSONSL_ACTION_PUSH);
-
-  if (state->type == JSONSL_T_LIST) {
-    value = mrb_ary_new(mrb);
-    state->mrb_data = value;
-  } else if (state->type == JSONSL_T_OBJECT) {
-    value = mrb_hash_new(mrb);
-    state->mrb_data = value;
-    printf("mrb_p:");
-    mrb_p(mrb,value);
-    printf("mrb_p:");
-    mrb_p(mrb,state->mrb_data);
-    printf("   value.tt:%x\n", value.tt);
-    printf("   value.tt:%x\n", state->mrb_data.tt);
-  } else {
-    mrb_raise(mrb, E_ARGUMENT_ERROR, "Type is neither Hash nor List");
-  }
-
-  jsn->action_callback = NULL;
-  jsn->action_callback_PUSH = create_new_element;
-  jsn->action_callback_POP = cleanup_closing_element;
-  printf("\n init_state:%p jsn:%p stack:%p\n", state, jsn, jsn->stack);
-  printf("sizeof(state):%ld\n", sizeof(struct jsonsl_state_st));
-  printf("state->type:%d\n",state->type);
-  printf("     &value:%p\n", &value);
-  printf("         tt:%x\n", value.tt);
-  printf("s->mrb_data:%x\n", state->mrb_data);
-  printf("s->data.tt :%x\n", state->mrb_data.tt);
-  printf("sizeof(m_d):%ld\n", sizeof(state->mrb_data));
-  printf("sizeof(val):%ld\n", sizeof(value));
-  mrb_p(mrb, value);
 }
 
 int error_callback(jsonsl_t jsn,
@@ -262,9 +202,9 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
 
   /* initalize callbacks */
   jsonsl_enable_all_callbacks(jsn);
-  jsn->action_callback = nest_callback_initial;
-  jsn->action_callback_PUSH = NULL;
-  jsn->action_callback_POP = NULL;
+  jsn->action_callback = NULL;
+  jsn->action_callback_PUSH = create_new_element;
+  jsn->action_callback_POP = cleanup_closing_element;
   jsn->error_callback = error_callback;
   jsn->max_callback_level = MAX_DESCENT_LEVEL;
 
