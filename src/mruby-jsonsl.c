@@ -73,12 +73,8 @@ create_new_element(jsonsl_t jsn,
   switch(state->type) {
   case JSONSL_T_SPECIAL:
   case JSONSL_T_STRING:
-    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
-    *(mrb_value *)(state->data) = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_HKEY:
-    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
-    *(mrb_value *)(state->data) = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_LIST:
     state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
@@ -114,11 +110,11 @@ cleanup_closing_element(jsonsl_t jsn,
   switch(state->type) {
   case JSONSL_T_SPECIAL:
     if (state->special_flags & JSONSL_SPECIALf_NUMNOINT) {
-      buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+      buf = (char *)jsn->base + state->pos_begin;
       temp_str = mrb_str_new(mrb, buf, at - buf);
       elem = mrb_float_value(mrb, mrb_str_to_dbl(mrb, temp_str, FALSE));
     } else if (state->special_flags & JSONSL_SPECIALf_NUMERIC) {
-      buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+      buf = (char *)jsn->base + state->pos_begin;
       temp_str = mrb_str_new(mrb, buf, at - buf);
       elem = mrb_str_to_inum(mrb, temp_str, 10, FALSE);
     } else if (state->special_flags & JSONSL_SPECIALf_TRUE) {
@@ -133,11 +129,11 @@ cleanup_closing_element(jsonsl_t jsn,
     break;
   case JSONSL_T_STRING:
     /* String or Speical value */
-    buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+    buf = (char *)jsn->base + state->pos_begin;
     elem = mrb_str_new(mrb, buf+1, at - buf - 1);
     break;
   case JSONSL_T_HKEY:
-    buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+    buf = (char *)jsn->base + state->pos_begin;
     elem = mrb_str_new(mrb, buf+1, at - buf - 1);
     break;
   case JSONSL_T_LIST:
