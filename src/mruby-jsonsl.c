@@ -144,8 +144,12 @@ cleanup_closing_element(jsonsl_t jsn,
     mrb_raise(mrb, E_ARGUMENT_ERROR, "unknown value");
   }
 
+  if (state->data) {
+    mrb_free(mrb, state->data);
+  }
+
   if (!last_state) {
-    data->result = *(mrb_value *)(state->data);
+    data->result = elem;
   } else if (last_state->type == JSONSL_T_LIST || last_state->type == JSONSL_T_OBJECT) {
     parent = (mrb_value *)last_state->data;
     if (mrb_array_p(*parent)) {
@@ -186,7 +190,6 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   int len;
   jsonsl_t jsn;
   mrb_jsonsl_data *data;
-  unsigned int ii;
 
   mrb_get_args(mrb, "s", &str, &len);
 
@@ -208,12 +211,6 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
 
   /* do parse */
   jsonsl_feed(jsn, str, len);
-
-  for (ii = 0; ii < jsn->levels_max; ii++) {
-    if (jsn->stack[ii].data) {
-      mrb_free(mrb, jsn->stack[ii].data);
-    }
-  }
 
   /* return result of parsing */
   return data->result;
