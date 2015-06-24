@@ -124,7 +124,7 @@ cleanup_closing_element(jsonsl_t jsn,
     } else if (state->special_flags & JSONSL_SPECIALf_NULL) {
       elem = mrb_nil_value();
     } else {
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "Ivalid special value");
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "Invalid special value");
     }
     break;
   case JSONSL_T_STRING:
