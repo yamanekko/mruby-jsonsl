@@ -9,8 +9,6 @@
 #define JSONSL_CALLOC(ptr) mrb_calloc((mrb), (ptr))
 #define JSONSL_MALLOC(ptr) mrb_malloc((mrb), (ptr))
 #define JSONSL_FREE(ptr)   mrb_free((mrb), (ptr))
-#undef  JSONSL_STATE_GENERIC
-#define JSONSL_STATE_USER_FIELDS mrb_value mrb_data;
 
 #include "jsonsl.h"
 #include "mruby-jsonsl.h"
@@ -64,8 +62,6 @@ create_new_element(jsonsl_t jsn,
                    struct jsonsl_state_st *state,
                    const char *buf)
 {
-  mrb_value v;
-
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
@@ -77,34 +73,24 @@ create_new_element(jsonsl_t jsn,
   switch(state->type) {
   case JSONSL_T_SPECIAL:
   case JSONSL_T_STRING:
-    state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
+    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
+    *(mrb_value *)(state->data) = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_HKEY:
-    state->mrb_data = mrb_cptr_value(mrb, (void *)buf);
+    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
+    *(mrb_value *)(state->data) = mrb_cptr_value(mrb, (void *)buf);
     break;
   case JSONSL_T_LIST:
-    state->mrb_data = mrb_ary_new(mrb);
+    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
+    *(mrb_value *)(state->data) = mrb_ary_new(mrb);
     break;
   case JSONSL_T_OBJECT:
-    state->mrb_data = mrb_hash_new(mrb);
+    state->data = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value));
+    *(mrb_value *)(state->data) = mrb_hash_new(mrb);
     break;
   default:
     mrb_raisef(mrb, E_TYPE_ERROR, "Unhandled type %c\n", state->type);
     break;
-  }
-}
-
-static mrb_value
-create_special_value(mrb_state *mrb, const char *buf, mrb_int len)
-{
-  if ((len == 4) && (memcmp(buf, "true", len) == 0)) {
-    return mrb_true_value();
-  } else if ((len == 5) && (memcmp(buf, "false", len) == 0)) {
-    return mrb_false_value();
-  } else if ((len == 4) && (memcmp(buf, "null", len) == 0)) {
-    return mrb_nil_value();
-  } else {
-    mrb_raise(mrb, E_ARGUMENT_ERROR, "Ivalid special value");
   }
 }
 
@@ -114,11 +100,12 @@ cleanup_closing_element(jsonsl_t jsn,
                         struct jsonsl_state_st *state,
                         const char *at)
 {
-  mrb_value parent;
+  mrb_value *parent;
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
   mrb_value elem;
+  mrb_value temp_str;
   char *buf;
   struct jsonsl_state_st *last_state = jsonsl_last_state(jsn, state);
 
@@ -126,39 +113,53 @@ cleanup_closing_element(jsonsl_t jsn,
 
   switch(state->type) {
   case JSONSL_T_SPECIAL:
-  case JSONSL_T_STRING:
-    /* String or Speical value */
-    buf = (char *)mrb_cptr(state->mrb_data);
-    if (*at == '"') {
-      elem = mrb_str_new(mrb, buf+1, at - buf - 2);
+    if (state->special_flags & JSONSL_SPECIALf_NUMNOINT) {
+      buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+      temp_str = mrb_str_new(mrb, buf, at - buf);
+      elem = mrb_float_value(mrb, mrb_str_to_dbl(mrb, temp_str, FALSE));
+    } else if (state->special_flags & JSONSL_SPECIALf_NUMERIC) {
+      buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+      temp_str = mrb_str_new(mrb, buf, at - buf);
+      elem = mrb_str_to_inum(mrb, temp_str, 10, FALSE);
+    } else if (state->special_flags & JSONSL_SPECIALf_TRUE) {
+      elem = mrb_true_value();
+    } else if (state->special_flags & JSONSL_SPECIALf_FALSE) {
+      elem = mrb_false_value();
+    } else if (state->special_flags & JSONSL_SPECIALf_NULL) {
+      elem = mrb_nil_value();
     } else {
-      elem = create_special_value(mrb, buf, at - buf);
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "Ivalid special value");
     }
     break;
+  case JSONSL_T_STRING:
+    /* String or Speical value */
+    buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+    elem = mrb_str_new(mrb, buf+1, at - buf - 1);
+    break;
   case JSONSL_T_HKEY:
-    buf = (char *)mrb_cptr(state->mrb_data);
-    elem = mrb_str_new(mrb, buf+1, at - buf - 2);
+    buf = (char *)mrb_cptr(*(mrb_value *)(state->data));
+    elem = mrb_str_new(mrb, buf+1, at - buf - 1);
     break;
   case JSONSL_T_LIST:
   case JSONSL_T_OBJECT:
-    elem = state->mrb_data;
+    elem = *(mrb_value *)state->data;
     break;
   default:
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "unknown value");
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "unknown value");
   }
 
   if (!last_state) {
-    data->result = state->mrb_data;
+    data->result = *(mrb_value *)(state->data);
   } else if (last_state->type == JSONSL_T_LIST || last_state->type == JSONSL_T_OBJECT) {
-    parent = last_state->mrb_data;
-    if (mrb_array_p(parent)) {
-      add_to_list(mrb, parent, elem);
-    } else if (mrb_hash_p(parent)) {
+    parent = (mrb_value *)last_state->data;
+    if (mrb_array_p(*parent)) {
+      add_to_list(mrb, *parent, elem);
+    } else if (mrb_hash_p(*parent)) {
       /* ignore keys; do add only values */
       if (state->type == JSONSL_T_HKEY) {
-        set_pending_key(mrb, parent, elem);
+        set_pending_key(mrb, *parent, elem);
       } else {
-        add_to_hash(mrb, parent, elem);
+        add_to_hash(mrb, *parent, elem);
       }
     } else {
       mrb_raise(mrb, E_ARGUMENT_ERROR, "Requested to add to non-container parent type!");
@@ -232,13 +233,42 @@ mrb_jsonsl_init(mrb_state *mrb, mrb_value self)
   return self;
 }
 
+static mrb_value
+mrb_jsonsl_init_copy(mrb_state *mrb, mrb_value copy)
+{
+  jsonsl_t jsn;
+  mrb_value src;
+  mrb_jsonsl_data *data;
+
+  mrb_get_args(mrb, "o", &src);
+  if (mrb_obj_equal(mrb, copy, src)) return copy;
+  if (!mrb_obj_is_instance_of(mrb, src, mrb_obj_class(mrb, copy))) {
+    mrb_raise(mrb, E_TYPE_ERROR, "wrong argument class");
+  }
+  if (!DATA_PTR(copy)) {
+    data = (mrb_jsonsl_data *)mrb_malloc(mrb, sizeof(mrb_jsonsl_data));
+    data->mrb = mrb;
+    data->result = mrb_undef_value(); /* result = undef */
+    jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
+    DATA_TYPE(copy) = &mrb_jsonsl_type;
+    DATA_PTR(copy) = jsn;
+    jsn->data = data;
+  }
+
+  return copy;
+}
+
 static void
 mrb_mruby_jsonsl_free(mrb_state *mrb, void *ptr)
 {
   jsonsl_t jsn = (jsonsl_t)ptr;
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
-  mrb_free(mrb, data);
-  jsonsl_destroy(jsn);
+  if (data) {
+    mrb_free(mrb, data);
+  }
+  if (jsn) {
+    jsonsl_destroy(jsn);
+  }
 }
 
 void
@@ -248,6 +278,7 @@ mrb_mruby_jsonsl_gem_init(mrb_state* mrb)
   MRB_SET_INSTANCE_TT(jsonsl, MRB_TT_DATA);
   mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_NONE());
   mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, jsonsl, "initialize_copy", mrb_jsonsl_init_copy, MRB_ARGS_REQ(1));
 }
 
 void

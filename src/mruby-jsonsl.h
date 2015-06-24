@@ -31,11 +31,6 @@ create_new_element(jsonsl_t jsn,
                    struct jsonsl_state_st *state,
                    const char *buf);
 
-static mrb_value
-create_special_value(mrb_state *mrb,
-                     const char *buf,
-                     mrb_int len);
-
 static void
 cleanup_closing_element(jsonsl_t jsn,
                         jsonsl_action_t action,
