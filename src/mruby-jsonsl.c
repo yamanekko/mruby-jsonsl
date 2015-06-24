@@ -186,6 +186,7 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   int len;
   jsonsl_t jsn;
   mrb_jsonsl_data *data;
+  unsigned int ii;
 
   mrb_get_args(mrb, "s", &str, &len);
 
@@ -207,6 +208,12 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
 
   /* do parse */
   jsonsl_feed(jsn, str, len);
+
+  for (ii = 0; ii < jsn->levels_max; ii++) {
+    if (jsn->stack[ii].data) {
+      mrb_free(mrb, jsn->stack[ii].data);
+    }
+  }
 
   /* return result of parsing */
   return data->result;
