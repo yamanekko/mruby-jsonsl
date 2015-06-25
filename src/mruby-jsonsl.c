@@ -109,14 +109,15 @@ cleanup_closing_element(jsonsl_t jsn,
 
   switch(state->type) {
   case JSONSL_T_SPECIAL:
+    /* Integer, Float or true/false/null */
     if (state->special_flags & JSONSL_SPECIALf_NUMNOINT) {
       buf = (char *)jsn->base + state->pos_begin;
       temp_str = mrb_str_new(mrb, buf, at - buf);
-      elem = mrb_float_value(mrb, mrb_str_to_dbl(mrb, temp_str, FALSE));
+      elem = mrb_float_value(mrb, mrb_str_to_dbl(mrb, temp_str, TRUE));
     } else if (state->special_flags & JSONSL_SPECIALf_NUMERIC) {
       buf = (char *)jsn->base + state->pos_begin;
       temp_str = mrb_str_new(mrb, buf, at - buf);
-      elem = mrb_str_to_inum(mrb, temp_str, 10, FALSE);
+      elem = mrb_str_to_inum(mrb, temp_str, 10, TRUE);
     } else if (state->special_flags & JSONSL_SPECIALf_TRUE) {
       elem = mrb_true_value();
     } else if (state->special_flags & JSONSL_SPECIALf_FALSE) {
@@ -128,11 +129,12 @@ cleanup_closing_element(jsonsl_t jsn,
     }
     break;
   case JSONSL_T_STRING:
-    /* String or Speical value */
+    /* String */
     buf = (char *)jsn->base + state->pos_begin;
     elem = mrb_str_new(mrb, buf+1, at - buf - 1);
     break;
   case JSONSL_T_HKEY:
+    /* String as key of Hash */
     buf = (char *)jsn->base + state->pos_begin;
     elem = mrb_str_new(mrb, buf+1, at - buf - 1);
     break;
