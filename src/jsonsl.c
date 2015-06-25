@@ -8,7 +8,6 @@
 #include <limits.h>
 #include <ctype.h>
 
-
 #ifdef JSONSL_USE_METRICS
 #define XMETRICS \
     X(STRINGY_INSIGNIFICANT) \
@@ -101,7 +100,7 @@ JSONSL_API
 jsonsl_t jsonsl_new(int nlevels)
 {
     struct jsonsl_st *jsn = (struct jsonsl_st *)
-            JSONSL_CALLOC(1, sizeof (*jsn) +
+            calloc(1, sizeof (*jsn) +
                     ( (nlevels-1) * sizeof (struct jsonsl_state_st) )
             );
 
@@ -134,7 +133,7 @@ JSONSL_API
 void jsonsl_destroy(jsonsl_t jsn)
 {
     if (jsn) {
-        JSONSL_FREE(jsn);
+        free(jsn);
     }
 }
 
@@ -210,6 +209,15 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
             INVOKE_ERROR(SPECIAL_EXPECTED); \
         }
 
+#define STATE_SPECIAL_LENGTH \
+    (state)->nescapes
+
+#define IS_NORMAL_NUMBER \
+    ((state)->special_flags == JSONSL_SPECIALf_UNSIGNED || \
+        (state)->special_flags == JSONSL_SPECIALf_SIGNED)
+
+#define STATE_NUM_LAST jsn->tok_last
+
     const jsonsl_uchar_t *c = (jsonsl_uchar_t*)bytes;
     size_t levels_max = jsn->levels_max;
     struct jsonsl_state_st *state = jsn->stack + jsn->level;
@@ -217,7 +225,7 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
     jsn->base = bytes;
 
     for (; nbytes; nbytes--, jsn->pos++, c++) {
-        register unsigned state_type;
+        unsigned state_type;
         INCR_METRIC(TOTAL);
         /* Special escape handling for some stuff */
         if (jsn->in_escape) {
@@ -258,21 +266,77 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
             INCR_METRIC(STRINGY_SLOWPATH);
 
         } else if (state_type == JSONSL_T_SPECIAL) {
+            /* Fast track for signed/unsigned */
+            if (IS_NORMAL_NUMBER) {
+                if (isdigit(CUR_CHAR)) {
+                    state->nelem = (state->nelem * 10) + (CUR_CHAR-0x30);
+                    goto GT_NEXT;
+                } else {
+                    goto GT_SPECIAL_NUMERIC;
+                }
+
+            } else if (state->special_flags == JSONSL_SPECIALf_DASH) {
+                if (!isdigit(CUR_CHAR)) {
+                    INVOKE_ERROR(INVALID_NUMBER);
+                }
+
+                if (CUR_CHAR == '0') {
+                    state->special_flags = JSONSL_SPECIALf_ZERO|JSONSL_SPECIALf_SIGNED;
+                } else if (isdigit(CUR_CHAR)) {
+                    state->special_flags = JSONSL_SPECIALf_SIGNED;
+                    state->nelem = CUR_CHAR - 0x30;
+                } else {
+                    INVOKE_ERROR(INVALID_NUMBER);
+                }
+
+                goto GT_NEXT;
+
+            } else if (state->special_flags == JSONSL_SPECIALf_ZERO) {
+                if (isdigit(CUR_CHAR)) {
+                    /* Following a zero! */
+                    INVOKE_ERROR(INVALID_NUMBER);
+                }
+                /* Unset the 'zero' flag: */
+                if (state->special_flags & JSONSL_SPECIALf_SIGNED) {
+                    state->special_flags = JSONSL_SPECIALf_SIGNED;
+                } else {
+                    state->special_flags = JSONSL_SPECIALf_UNSIGNED;
+                }
+                goto GT_SPECIAL_NUMERIC;
+            }
+
             if (state->special_flags & JSONSL_SPECIALf_NUMERIC) {
+                GT_SPECIAL_NUMERIC:
                 switch (CUR_CHAR) {
                 CASE_DIGITS
-                    state->nelem = (state->nelem*10) + (CUR_CHAR-0x30);
+                    STATE_NUM_LAST = '1';
+                    goto GT_NEXT;
+
+                case '.':
+                    if (state->special_flags & JSONSL_SPECIALf_FLOAT) {
+                        INVOKE_ERROR(INVALID_NUMBER);
+                    }
+                    state->special_flags |= JSONSL_SPECIALf_FLOAT;
+                    STATE_NUM_LAST = '.';
                     goto GT_NEXT;
 
                 case 'e':
                 case 'E':
+                    if (state->special_flags & JSONSL_SPECIALf_EXPONENT) {
+                        INVOKE_ERROR(INVALID_NUMBER);
+                    }
+                    state->special_flags |= JSONSL_SPECIALf_EXPONENT;
+                    STATE_NUM_LAST = 'e';
+                    goto GT_NEXT;
+
                 case '-':
                 case '+':
-                    state->special_flags |= JSONSL_SPECIALf_EXPONENT;
+                    if (STATE_NUM_LAST != 'e') {
+                        INVOKE_ERROR(INVALID_NUMBER);
+                    }
+                    STATE_NUM_LAST = '-';
                     goto GT_NEXT;
-                case '.':
-                    state->special_flags |= JSONSL_SPECIALf_FLOAT;
-                    goto GT_NEXT;
+
                 default:
                     if (is_special_end(CUR_CHAR)) {
                         goto GT_SPECIAL_POP;
@@ -283,6 +347,8 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
             }
             /* else if (!NUMERIC) */
             if (!is_special_end(CUR_CHAR)) {
+                STATE_SPECIAL_LENGTH++;
+
                 /* Verify TRUE, FALSE, NULL */
                 if (state->special_flags == JSONSL_SPECIALf_TRUE) {
                     VERIFY_SPECIAL("true");
@@ -296,6 +362,34 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
             }
 
             GT_SPECIAL_POP:
+            if (IS_NORMAL_NUMBER) {
+                /* Nothing */
+            } else if (state->special_flags == JSONSL_SPECIALf_ZERO ||
+                    state->special_flags == (JSONSL_SPECIALf_ZERO|JSONSL_SPECIALf_SIGNED)) {
+                /* 0 is unsigned! */
+                state->special_flags = JSONSL_SPECIALf_UNSIGNED;
+            } else if (state->special_flags == JSONSL_SPECIALf_DASH) {
+                /* Still in dash! */
+                INVOKE_ERROR(INVALID_NUMBER);
+            } else if (state->special_flags & JSONSL_SPECIALf_NUMERIC) {
+                /* Check that we're not at the end of a token */
+                if (STATE_NUM_LAST != '1') {
+                    INVOKE_ERROR(INVALID_NUMBER);
+                }
+            } else if (state->special_flags == JSONSL_SPECIALf_TRUE) {
+                if (STATE_SPECIAL_LENGTH != 4) {
+                    INVOKE_ERROR(SPECIAL_INCOMPLETE);
+                }
+                state->nelem = 1;
+            } else if (state->special_flags == JSONSL_SPECIALf_FALSE) {
+                if (STATE_SPECIAL_LENGTH != 5) {
+                    INVOKE_ERROR(SPECIAL_INCOMPLETE);
+                }
+            } else if (state->special_flags == JSONSL_SPECIALf_NULL) {
+                if (STATE_SPECIAL_LENGTH != 4) {
+                    INVOKE_ERROR(SPECIAL_INCOMPLETE);
+                }
+            }
             SPECIAL_POP;
             jsn->expecting = ',';
             if (is_allowed_whitespace(CUR_CHAR)) {
@@ -479,6 +573,8 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
             } else {
                 if (state->type != '{') {
                     INVOKE_ERROR(BRACKET_MISMATCH);
+                } else if (state->nelem && state->nelem % 2 != 0) {
+                    INVOKE_ERROR(VALUE_EXPECTED);
                 }
                 DO_CALLBACK(OBJECT, POP);
             }
@@ -517,9 +613,13 @@ jsonsl_feed(jsonsl_t jsn, const jsonsl_char_t *bytes, size_t nbytes)
                 STACK_PUSH;
                 state->type = JSONSL_T_SPECIAL;
                 state->special_flags = special_flags;
+                STATE_SPECIAL_LENGTH = 1;
+
                 if (special_flags == JSONSL_SPECIALf_UNSIGNED) {
                     state->nelem = CUR_CHAR - 0x30;
+                    STATE_NUM_LAST = '1';
                 } else {
+                    STATE_NUM_LAST = '-';
                     state->nelem = 0;
                 }
                 DO_CALLBACK(SPECIAL, PUSH);
@@ -697,12 +797,12 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
     }
 
     components = (struct jsonsl_jpr_component_st *)
-            JSONSL_MALLOC(sizeof(*components) * count);
+            malloc(sizeof(*components) * count);
     if (!components) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
 
-    my_copy = (char *)JSONSL_MALLOC(strlen(path) + 1);
+    my_copy = (char *)malloc(strlen(path) + 1);
     if (!my_copy) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
@@ -733,11 +833,11 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
 
     path--; /*revert path to leading '/' */
     origlen = strlen(path) + 1;
-    ret = (struct jsonsl_jpr_st *)JSONSL_MALLOC(sizeof(*ret));
+    ret = (struct jsonsl_jpr_st *)malloc(sizeof(*ret));
     if (!ret) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
-    ret->orig = (char *)JSONSL_MALLOC(origlen);
+    ret->orig = (char *)malloc(origlen);
     if (!ret->orig) {
         JPR_BAIL(JSONSL_ERROR_ENOMEM);
     }
@@ -750,22 +850,22 @@ jsonsl_jpr_new(const char *path, jsonsl_error_t *errp)
     return ret;
 
     GT_ERROR:
-    JSONSL_FREE(my_copy);
-    JSONSL_FREE(components);
+    free(my_copy);
+    free(components);
     if (ret) {
-        JSONSL_FREE(ret->orig);
+        free(ret->orig);
     }
-    JSONSL_FREE(ret);
+    free(ret);
     return NULL;
 #undef JPR_BAIL
 }
 
 void jsonsl_jpr_destroy(jsonsl_jpr_t jpr)
 {
-    JSONSL_FREE(jpr->components);
-    JSONSL_FREE(jpr->basestr);
-    JSONSL_FREE(jpr->orig);
-    JSONSL_FREE(jpr);
+    free(jpr->components);
+    free(jpr->basestr);
+    free(jpr->orig);
+    free(jpr);
 }
 
 JSONSL_API
@@ -824,6 +924,8 @@ jsonsl_jpr_match(jsonsl_jpr_t jpr,
              * a list for a parent */
             return JSONSL_MATCH_TYPE_MISMATCH;
         }
+    } else if (parent_type == JSONSL_T_LIST) {
+        return JSONSL_MATCH_TYPE_MISMATCH;
     }
 
     /* Check lengths */
@@ -853,9 +955,9 @@ void jsonsl_jpr_match_state_init(jsonsl_t jsn,
     if (njprs == 0) {
         return;
     }
-    jsn->jprs = (jsonsl_jpr_t *)JSONSL_MALLOC(sizeof(jsonsl_jpr_t) * njprs);
+    jsn->jprs = (jsonsl_jpr_t *)malloc(sizeof(jsonsl_jpr_t) * njprs);
     jsn->jpr_count = njprs;
-    jsn->jpr_root = (size_t*)JSONSL_CALLOC(1, sizeof(size_t) * njprs * jsn->levels_max);
+    jsn->jpr_root = (size_t*)calloc(1, sizeof(size_t) * njprs * jsn->levels_max);
     memcpy(jsn->jprs, jprs, sizeof(jsonsl_jpr_t) * njprs);
     /* Set the initial jump table values */
 
@@ -872,8 +974,8 @@ void jsonsl_jpr_match_state_cleanup(jsonsl_t jsn)
         return;
     }
 
-    JSONSL_FREE(jsn->jpr_root);
-    JSONSL_FREE(jsn->jprs);
+    free(jsn->jpr_root);
+    free(jsn->jprs);
     jsn->jprs = NULL;
     jsn->jpr_root = NULL;
     jsn->jpr_count = 0;
@@ -1104,30 +1206,30 @@ size_t jsonsl_util_unescape_ex(const char *in,
 static unsigned short Special_Table[0x100] = {
         /* 0x00 */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0x1f */
         /* 0x20 */ 0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0x2c */
-        /* 0x2d */ JSONSL_SPECIALf_SIGNED /* - */, /* 0x2d */
+        /* 0x2d */ JSONSL_SPECIALf_DASH /* <-> */, /* 0x2d */
         /* 0x2e */ 0,0, /* 0x2f */
-        /* 0x30 */ JSONSL_SPECIALf_UNSIGNED /* 0 */, /* 0x30 */
-        /* 0x31 */ JSONSL_SPECIALf_UNSIGNED /* 1 */, /* 0x31 */
-        /* 0x32 */ JSONSL_SPECIALf_UNSIGNED /* 2 */, /* 0x32 */
-        /* 0x33 */ JSONSL_SPECIALf_UNSIGNED /* 3 */, /* 0x33 */
-        /* 0x34 */ JSONSL_SPECIALf_UNSIGNED /* 4 */, /* 0x34 */
-        /* 0x35 */ JSONSL_SPECIALf_UNSIGNED /* 5 */, /* 0x35 */
-        /* 0x36 */ JSONSL_SPECIALf_UNSIGNED /* 6 */, /* 0x36 */
-        /* 0x37 */ JSONSL_SPECIALf_UNSIGNED /* 7 */, /* 0x37 */
-        /* 0x38 */ JSONSL_SPECIALf_UNSIGNED /* 8 */, /* 0x38 */
-        /* 0x39 */ JSONSL_SPECIALf_UNSIGNED /* 9 */, /* 0x39 */
+        /* 0x30 */ JSONSL_SPECIALf_ZERO /* <0> */, /* 0x30 */
+        /* 0x31 */ JSONSL_SPECIALf_UNSIGNED /* <1> */, /* 0x31 */
+        /* 0x32 */ JSONSL_SPECIALf_UNSIGNED /* <2> */, /* 0x32 */
+        /* 0x33 */ JSONSL_SPECIALf_UNSIGNED /* <3> */, /* 0x33 */
+        /* 0x34 */ JSONSL_SPECIALf_UNSIGNED /* <4> */, /* 0x34 */
+        /* 0x35 */ JSONSL_SPECIALf_UNSIGNED /* <5> */, /* 0x35 */
+        /* 0x36 */ JSONSL_SPECIALf_UNSIGNED /* <6> */, /* 0x36 */
+        /* 0x37 */ JSONSL_SPECIALf_UNSIGNED /* <7> */, /* 0x37 */
+        /* 0x38 */ JSONSL_SPECIALf_UNSIGNED /* <8> */, /* 0x38 */
+        /* 0x39 */ JSONSL_SPECIALf_UNSIGNED /* <9> */, /* 0x39 */
         /* 0x3a */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0x59 */
         /* 0x5a */ 0,0,0,0,0,0,0,0,0,0,0,0, /* 0x65 */
-        /* 0x66 */ JSONSL_SPECIALf_FALSE /* f */, /* 0x66 */
+        /* 0x66 */ JSONSL_SPECIALf_FALSE /* <f> */, /* 0x66 */
         /* 0x67 */ 0,0,0,0,0,0,0, /* 0x6d */
-        /* 0x6e */ JSONSL_SPECIALf_NULL /* n */, /* 0x6e */
+        /* 0x6e */ JSONSL_SPECIALf_NULL /* <n> */, /* 0x6e */
         /* 0x6f */ 0,0,0,0,0, /* 0x73 */
-        /* 0x74 */ JSONSL_SPECIALf_TRUE /* t */, /* 0x74 */
+        /* 0x74 */ JSONSL_SPECIALf_TRUE /* <t> */, /* 0x74 */
         /* 0x75 */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0x94 */
         /* 0x95 */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0xb4 */
         /* 0xb5 */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0xd4 */
         /* 0xd5 */ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, /* 0xf4 */
-        /* 0xf5 */ 0,0,0,0,0,0,0,0,0,0 /* 0xfe */
+        /* 0xf5 */ 0,0,0,0,0,0,0,0,0,0, /* 0xfe */
 };
 
 /**
@@ -1253,3 +1355,23 @@ static int is_allowed_whitespace(unsigned c) {
 static int is_allowed_escape(unsigned c) {
     return Allowed_Escapes[c & 0xff];
 }
+
+/* Clean up all our macros! */
+#undef INCR_METRIC
+#undef INCR_GENERIC
+#undef INCR_STRINGY_CATCH
+#undef CASE_DIGITS
+#undef INVOKE_ERROR
+#undef STACK_PUSH
+#undef STACK_POP_NOPOS
+#undef STACK_POP
+#undef CALLBACK_AND_POP_NOPOS
+#undef CALLBACK_AND_POP
+#undef SPECIAL_POP
+#undef CUR_CHAR
+#undef DO_CALLBACK
+#undef ENSURE_HVAL
+#undef VERIFY_SPECIAL
+#undef STATE_SPECIAL_LENGTH
+#undef IS_NORMAL_NUMBER
+#undef STATE_NUM_LAST

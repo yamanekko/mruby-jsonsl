@@ -58,6 +58,11 @@ typedef int ssize_t;
 #define JSONSL_STATE_USER_FIELDS
 #endif /* JSONSL_STATE_GENERIC */
 
+/* Additional fields for component object */
+#ifndef JSONSL_JPR_COMPONENT_USER_FIELDS
+#define JSONSL_JPR_COMPONENT_USER_FIELDS
+#endif
+
 #ifndef JSONSL_API
 /**
  * We require a /DJSONSL_DLL so that users already using this as a static
@@ -82,17 +87,6 @@ typedef int ssize_t;
 #endif /* JSONSL_INLINE */
 
 #define JSONSL_MAX_LEVELS 512
-
-#ifndef JSONSL_MALLOC
-#define JSONSL_MALLOC malloc
-#endif /* JSONSL_MALLOC */
-#ifndef JSONSL_CALLOC
-#define JSONSL_CALLOC calloc
-#endif /* JSONSL_CALLOC */
-#ifndef JSONSL_FREE
-#define JSONSL_FREE free
-#endif /* JSONSL_FREE */
-
 
 struct jsonsl_st;
 typedef struct jsonsl_st *jsonsl_t;
@@ -156,10 +150,21 @@ typedef enum {
     JSONSL_XSPECIAL
 #undef X
     /* Handy flags for checking */
+
     JSONSL_SPECIALf_UNKNOWN = 1 << 8,
-    JSONSL_SPECIALf_NUMERIC = (JSONSL_SPECIALf_SIGNED|JSONSL_SPECIALf_UNSIGNED),
+
+    /** @private Private */
+    JSONSL_SPECIALf_ZERO    = 1 << 9 | JSONSL_SPECIALf_UNSIGNED,
+    /** @private */
+    JSONSL_SPECIALf_DASH    = 1 << 10,
+
+    /** Type is numeric */
+    JSONSL_SPECIALf_NUMERIC = (JSONSL_SPECIALf_SIGNED| JSONSL_SPECIALf_UNSIGNED),
+
+    /** Type is a boolean */
     JSONSL_SPECIALf_BOOLEAN = (JSONSL_SPECIALf_TRUE|JSONSL_SPECIALf_FALSE),
-    /* For non-simple numeric types */
+
+    /** Type is an "extended", not integral type (but numeric) */
     JSONSL_SPECIALf_NUMNOINT = (JSONSL_SPECIALf_FLOAT|JSONSL_SPECIALf_EXPONENT)
 } jsonsl_special_t;
 
@@ -191,6 +196,8 @@ typedef enum {
     X(GARBAGE_TRAILING) \
 /* We were expecting a 'special' (numeric, true, false, null) */ \
     X(SPECIAL_EXPECTED) \
+/* The 'special' value was incomplete */ \
+    X(SPECIAL_INCOMPLETE) \
 /* Found a stray token */ \
     X(STRAY_TOKEN) \
 /* We were expecting a token before this one */ \
@@ -221,6 +228,8 @@ typedef enum {
     X(TRAILING_COMMA) \
 /* An invalid number was passed in a numeric field */ \
     X(INVALID_NUMBER) \
+/* Value is missing for object */ \
+    X(VALUE_EXPECTED) \
 /* The following are for JPR Stuff */ \
     \
 /* Found a literal '%' but it was only followed by a single valid hex digit */ \
@@ -314,6 +323,9 @@ struct jsonsl_state_st {
 
     /**
      * Counter which is incremented each time an escape ('\') is encountered.
+     * This is used internally for non-string types and should only be
+     * inspected by the user if the state actually represents a string
+     * type.
      */
     unsigned int nescapes;
 
@@ -338,6 +350,26 @@ struct jsonsl_state_st {
     void *data;
 #endif /* JSONSL_STATE_USER_FIELDS */
 };
+
+/**Gets the number of elements in the list.
+ * @param st The state. Must be of type JSONSL_T_LIST
+ * @return number of elements in the list
+ */
+#define JSONSL_LIST_SIZE(st) ((st)->nelem)
+
+/**Gets the number of key-value pairs in an object
+ * @param st The state. Must be of type JSONSL_T_OBJECT
+ * @return the number of key-value pairs in the object
+ */
+#define JSONSL_OBJECT_SIZE(st) ((st)->nelem / 2)
+
+/**Gets the numeric value.
+ * @param st The state. Must be of type JSONSL_T_SPECIAL and
+ *           special_flags must have the JSONSL_SPECIALf_NUMERIC flag
+ *           set.
+ * @return the numeric value of the state.
+ */
+#define JSONSL_NUMERIC_VALUE(st) ((st)->nelem)
 
 /*
  * So now we need some special structure for keeping the
@@ -436,7 +468,12 @@ struct jsonsl_st {
     /** Default callback for any action, if neither PUSH or POP callbacks are defined */
     jsonsl_stack_callback action_callback;
 
-    /** Do not invoke callbacks for objects deeper than this level */
+    /**
+     * Do not invoke callbacks for objects deeper than this level.
+     * NOTE: This field establishes the lower bound for ignored callbacks,
+     * and is thus misnamed. `min_ignore_level` would actually make more
+     * sense, but we don't want to break API.
+     */
     unsigned int max_callback_level;
 
     /** The error callback. Invoked when an error happens. Should not be NULL */
@@ -716,6 +753,9 @@ struct jsonsl_jpr_component_st {
      * indices. jsonsl_jpr_match() will return TYPE_MISMATCH if it detects
      * that an array index is actually a child of a dictionary. */
     short is_arridx;
+
+    /* Extra fields (for more advanced searches. Default is empty) */
+    JSONSL_JPR_COMPONENT_USER_FIELDS
 };
 
 struct jsonsl_jpr_st {
