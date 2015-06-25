@@ -182,7 +182,7 @@ int error_callback(jsonsl_t jsn,
   mrb_state *mrb = (mrb_state *)data->mrb;
 
   mrb_raisef(mrb, E_ARGUMENT_ERROR,
-             "Got error at pos %lu: %s\n", jsn->pos, jsonsl_strerror(err));
+             "got error at %S: %S\n", mrb_fixnum_value(jsn->pos), mrb_str_new_cstr(mrb, jsonsl_strerror(err)));
 
   /* do not reach */
   return 0;
