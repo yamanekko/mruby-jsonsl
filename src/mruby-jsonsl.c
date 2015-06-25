@@ -6,10 +6,6 @@
 #include "mruby/value.h"
 #include "mruby/string.h"
 
-#define JSONSL_CALLOC(ptr) mrb_calloc((mrb), (ptr))
-#define JSONSL_MALLOC(ptr) mrb_malloc((mrb), (ptr))
-#define JSONSL_FREE(ptr)   mrb_free((mrb), (ptr))
-
 #include "jsonsl.h"
 #include "mruby-jsonsl.h"
 
@@ -22,6 +18,12 @@ static int MAX_DESCENT_LEVEL = 20;
 static int MAX_JSON_SIZE = 0x100;
 
 #define MRB_JSONSL_PENDING_KEY mrb_sym2str(mrb, mrb_intern_lit(mrb, "pending_key"))
+
+static inline struct RClass *
+get_jsonsl_error(mrb_state *mrb)
+{
+  return mrb_class_get_under(mrb, mrb_class_get(mrb, "JSONSL"), "Error");
+}
 
 static inline void
 set_pending_key(mrb_state *mrb, mrb_value hash, mrb_value value)
@@ -67,7 +69,7 @@ create_new_element(jsonsl_t jsn,
 
   if (state->level == 1 &&
       ((state->type != JSONSL_T_LIST) && (state->type != JSONSL_T_OBJECT))) {
-    mrb_raise(mrb, E_ARGUMENT_ERROR, "Toplevel element should be Hash or List");
+    mrb_raise(mrb, get_jsonsl_error(mrb), "Toplevel element should be Hash or List");
   }
 
   switch(state->type) {
@@ -85,7 +87,7 @@ create_new_element(jsonsl_t jsn,
     *(mrb_value *)(state->data) = mrb_hash_new(mrb);
     break;
   default:
-    mrb_raisef(mrb, E_TYPE_ERROR, "Unhandled type %c\n", state->type);
+    mrb_raisef(mrb, get_jsonsl_error(mrb), "Unhandled type %c\n", state->type);
     break;
   }
 }
@@ -125,7 +127,7 @@ cleanup_closing_element(jsonsl_t jsn,
     } else if (state->special_flags & JSONSL_SPECIALf_NULL) {
       elem = mrb_nil_value();
     } else {
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "Invalid special value");
+      mrb_raise(mrb, get_jsonsl_error(mrb), "Invalid special value");
     }
     break;
   case JSONSL_T_STRING:
@@ -147,7 +149,7 @@ cleanup_closing_element(jsonsl_t jsn,
     elem = *(mrb_value *)state->data;
     break;
   default:
-    mrb_raise(mrb, E_ARGUMENT_ERROR, "unknown value");
+    mrb_raise(mrb, get_jsonsl_error(mrb), "Unknown value");
   }
 
   if (state->data) {
@@ -168,7 +170,7 @@ cleanup_closing_element(jsonsl_t jsn,
         add_to_hash(mrb, *parent, elem);
       }
     } else {
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "Requested to add to non-container parent type!");
+      mrb_raise(mrb, get_jsonsl_error(mrb), "Requested to add to non-container parent type!");
     }
   }
 }
@@ -181,8 +183,8 @@ int error_callback(jsonsl_t jsn,
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)jsn->data;
   mrb_state *mrb = (mrb_state *)data->mrb;
 
-  mrb_raisef(mrb, E_ARGUMENT_ERROR,
-             "got error at %S: %S\n", mrb_fixnum_value(jsn->pos), mrb_str_new_cstr(mrb, jsonsl_strerror(err)));
+  mrb_raisef(mrb, get_jsonsl_error(mrb),
+             "Got error at %S: %S\n", mrb_fixnum_value(jsn->pos), mrb_str_new_cstr(mrb, jsonsl_strerror(err)));
 
   /* do not reach */
   return 0;
@@ -214,7 +216,7 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
     data->symbol_key = FALSE;
   } else {
     if (mrb_type(obj) != MRB_TT_HASH) {
-      mrb_raise(mrb, E_ARGUMENT_ERROR, "option should be Hash");
+      mrb_raise(mrb, get_jsonsl_error(mrb), "Option should be Hash");
     } else {
       if (mrb_bool(mrb_hash_get(mrb, obj, key))) {
         data->symbol_key = TRUE;
@@ -234,6 +236,9 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
 
   /* do parse */
   jsonsl_feed(jsn, str, len);
+  if (jsn->level != 0) {
+    mrb_raise(mrb, get_jsonsl_error(mrb), "JSON data is terminated");
+  }
 
   /* return result of parsing */
   return data->result;
@@ -243,12 +248,20 @@ static mrb_value
 mrb_jsonsl_init(mrb_state *mrb, mrb_value self)
 {
   jsonsl_t jsn;
+  mrb_int jsonsl_size;
+  int n;
 
   mrb_jsonsl_data *data = (mrb_jsonsl_data *)mrb_malloc(mrb, sizeof(mrb_jsonsl_data));
   data->mrb = mrb;
   data->result = mrb_undef_value(); /* result = undef */
 
-  jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
+  n = mrb_get_args(mrb, "|i", &jsonsl_size);
+  if (n == 0) {
+    jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
+  } else {
+    jsn = jsonsl_new(jsonsl_size);
+  }
+
   DATA_TYPE(self) = &mrb_jsonsl_type;
   DATA_PTR(self) = jsn;
   jsn->data = data;
@@ -259,20 +272,23 @@ mrb_jsonsl_init(mrb_state *mrb, mrb_value self)
 static mrb_value
 mrb_jsonsl_init_copy(mrb_state *mrb, mrb_value copy)
 {
-  jsonsl_t jsn;
+  jsonsl_t jsn, jsn_orig;
   mrb_value src;
   mrb_jsonsl_data *data;
+  int jsonsl_size;
 
   mrb_get_args(mrb, "o", &src);
   if (mrb_obj_equal(mrb, copy, src)) return copy;
   if (!mrb_obj_is_instance_of(mrb, src, mrb_obj_class(mrb, copy))) {
-    mrb_raise(mrb, E_TYPE_ERROR, "wrong argument class");
+    mrb_raise(mrb, get_jsonsl_error(mrb), "wrong argument class");
   }
   if (!DATA_PTR(copy)) {
+    jsn_orig = DATA_PTR(src);
+    jsonsl_size = jsn_orig->levels_max;
     data = (mrb_jsonsl_data *)mrb_malloc(mrb, sizeof(mrb_jsonsl_data));
     data->mrb = mrb;
     data->result = mrb_undef_value(); /* result = undef */
-    jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
+    jsn = jsonsl_new(jsonsl_size); /* jsonsl_new() uses calloc() */
     DATA_TYPE(copy) = &mrb_jsonsl_type;
     DATA_PTR(copy) = jsn;
     jsn->data = data;
@@ -298,8 +314,9 @@ void
 mrb_mruby_jsonsl_gem_init(mrb_state* mrb)
 {
   struct RClass *jsonsl = mrb_define_class(mrb, "JSONSL", mrb->object_class);
+  mrb_define_class_under(mrb, jsonsl, "Error", E_RUNTIME_ERROR);
   MRB_SET_INSTANCE_TT(jsonsl, MRB_TT_DATA);
-  mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_NONE());
+  mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_OPT(1));
   mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_ARG(1,1));
   mrb_define_method(mrb, jsonsl, "initialize_copy", mrb_jsonsl_init_copy, MRB_ARGS_REQ(1));
 }

@@ -11,19 +11,10 @@ typedef struct mrb_jsonsl_data {
   mrb_bool symbol_key;
 } mrb_jsonsl_data;
 
-static inline void
-set_pending_key(mrb_state *mrb, mrb_value hash, mrb_value value);
-
-static inline void
-remove_pending_key(mrb_state *mrb, mrb_value hash);
-
-static inline mrb_value
-get_pending_key(mrb_state *mrb, mrb_value hash);
-
-static inline void
+static void
 add_to_hash(mrb_state *mrb, mrb_value parent, mrb_value value);
 
-static inline void
+static void
 add_to_list(mrb_state *mrb, mrb_value parent, mrb_value value);
 
 static void
@@ -37,12 +28,6 @@ cleanup_closing_element(jsonsl_t jsn,
                         jsonsl_action_t action,
                         struct jsonsl_state_st *state,
                         const char *at);
-
-void
-nest_callback_initial(jsonsl_t jsn,
-                      jsonsl_action_t action,
-                      struct jsonsl_state_st *state,
-                      const char *at);
 
 int
 error_callback(jsonsl_t jsn,

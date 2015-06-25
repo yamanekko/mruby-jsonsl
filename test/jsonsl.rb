@@ -26,3 +26,28 @@ assert('JSONSL#dup') do
   json = JSONSL.new.dup.parse('{"foo":[1,2,3.14,"hoge",{"a":"b"}]}')
   assert_equal(json, json.dup)
 end
+assert('JSONSL::Error') do
+  assert_raise(JSONSL::Error) do
+    json = JSONSL.parse('{"foo":nil}')
+  end
+end
+assert('JSONSL::Error') do
+  assert_raise(JSONSL::Error) do
+    json = JSONSL.parse('{"foo":')
+  end
+end
+assert('JSONSL::Error') do
+  assert_raise(JSONSL::Error) do
+    json = JSONSL.parse('{"foo":true}}')
+  end
+end
+assert('too much nested JSON') do
+  str = ("["*10000) + "0" + ("]"*10000)
+  json = JSONSL.new(10002).parse(str)
+end
+assert('too much nested JSON and copy') do
+  str = ("["*10000) + "0" + ("]"*10000)
+  json = JSONSL.new(10002)
+  json2 = json.dup
+  json2.parse(str)
+end
