@@ -19,6 +19,9 @@ end
 assert('JSONSL.parse') do
   assert_equal({"foo"=>true}, JSONSL.parse('{"foo":true}'))
 end
+assert('JSONSL.parse.hash') do
+  assert_equal({:foo=>true}, JSONSL.new.parse('{"foo":true}',{:symbol_key => true}))
+end
 assert('JSONSL#dup') do
   json = JSONSL.new.dup.parse('{"foo":[1,2,3.14,"hoge",{"a":"b"}]}')
   assert_equal(json, json.dup)

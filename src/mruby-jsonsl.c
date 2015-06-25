@@ -136,7 +136,11 @@ cleanup_closing_element(jsonsl_t jsn,
   case JSONSL_T_HKEY:
     /* String as key of Hash */
     buf = (char *)jsn->base + state->pos_begin;
-    elem = mrb_str_new(mrb, buf+1, at - buf - 1);
+    if (((mrb_jsonsl_data *)jsn->data)->symbol_key) {
+      elem = mrb_symbol_value(mrb_intern(mrb, buf+1, at - buf - 1));
+    } else {
+      elem = mrb_str_new(mrb, buf+1, at - buf - 1);
+    }
     break;
   case JSONSL_T_LIST:
   case JSONSL_T_OBJECT:
@@ -192,8 +196,11 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   int len;
   jsonsl_t jsn;
   mrb_jsonsl_data *data;
+  mrb_value obj;
+  mrb_bool opt;
+  mrb_value key ;
 
-  mrb_get_args(mrb, "s", &str, &len);
+  mrb_get_args(mrb, "s|o?", &str, &len, &obj, &opt);
 
   /* get jsonsl and reset it */
   jsn = DATA_PTR(self);
@@ -202,6 +209,20 @@ mrb_jsonsl_parse(mrb_state *mrb, mrb_value self)
   /* initialize jsn->data */
   data = (mrb_jsonsl_data *)jsn->data;
   data->result = mrb_undef_value();
+  key = mrb_symbol_value(mrb_intern_lit(mrb, "symbol_key"));
+  if (!opt) {
+    data->symbol_key = FALSE;
+  } else {
+    if (mrb_type(obj) != MRB_TT_HASH) {
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "option should be Hash");
+    } else {
+      if (mrb_bool(mrb_hash_get(mrb, obj, key))) {
+        data->symbol_key = TRUE;
+      } else {
+        data->symbol_key = FALSE;
+      }
+    }
+  }
 
   /* initalize callbacks */
   jsonsl_enable_all_callbacks(jsn);
@@ -279,7 +300,7 @@ mrb_mruby_jsonsl_gem_init(mrb_state* mrb)
   struct RClass *jsonsl = mrb_define_class(mrb, "JSONSL", mrb->object_class);
   MRB_SET_INSTANCE_TT(jsonsl, MRB_TT_DATA);
   mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_NONE());
-  mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_ARG(1,1));
   mrb_define_method(mrb, jsonsl, "initialize_copy", mrb_jsonsl_init_copy, MRB_ARGS_REQ(1));
 }
 

@@ -8,6 +8,7 @@
 typedef struct mrb_jsonsl_data {
   mrb_state *mrb;
   mrb_value result;
+  mrb_bool symbol_key;
 } mrb_jsonsl_data;
 
 static inline void
