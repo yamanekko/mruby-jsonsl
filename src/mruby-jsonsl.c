@@ -158,20 +158,21 @@ cleanup_closing_element(jsonsl_t jsn,
 
   if (!last_state) {
     data->result = elem;
-  } else if (last_state->type == JSONSL_T_LIST || last_state->type == JSONSL_T_OBJECT) {
+  } else if (last_state->type == JSONSL_T_LIST) {
     parent = (mrb_value *)last_state->data;
-    if (mrb_array_p(*parent)) {
-      add_to_list(mrb, *parent, elem);
-    } else if (mrb_hash_p(*parent)) {
-      /* ignore keys; do add only values */
-      if (state->type == JSONSL_T_HKEY) {
-        set_pending_key(mrb, *parent, elem);
-      } else {
-        add_to_hash(mrb, *parent, elem);
-      }
+    mrb_assert(mrb_array_p(*parent));
+    add_to_list(mrb, *parent, elem);
+  } else if (last_state->type == JSONSL_T_OBJECT) {
+    parent = (mrb_value *)last_state->data;
+    mrb_assert((mrb_hash_p(*parent)));
+    /* ignore keys; do add only values */
+    if (state->type == JSONSL_T_HKEY) {
+      set_pending_key(mrb, *parent, elem);
     } else {
-      mrb_raise(mrb, get_jsonsl_error(mrb), "Requested to add to non-container parent type!");
+      add_to_hash(mrb, *parent, elem);
     }
+  } else {
+    mrb_raise(mrb, get_jsonsl_error(mrb), "Requested to add to non-container parent type!");
   }
 }
 
@@ -314,8 +315,11 @@ void
 mrb_mruby_jsonsl_gem_init(mrb_state* mrb)
 {
   struct RClass *jsonsl = mrb_define_class(mrb, "JSONSL", mrb->object_class);
-  mrb_define_class_under(mrb, jsonsl, "Error", E_RUNTIME_ERROR);
   MRB_SET_INSTANCE_TT(jsonsl, MRB_TT_DATA);
+
+  /* define "JSON::Error" class for runtime exception */
+  mrb_define_class_under(mrb, jsonsl, "Error", E_RUNTIME_ERROR);
+
   mrb_define_method(mrb, jsonsl, "initialize", mrb_jsonsl_init, MRB_ARGS_OPT(1));
   mrb_define_method(mrb, jsonsl, "parse", mrb_jsonsl_parse, MRB_ARGS_ARG(1,1));
   mrb_define_method(mrb, jsonsl, "initialize_copy", mrb_jsonsl_init_copy, MRB_ARGS_REQ(1));
