@@ -1,6 +1,7 @@
 MRuby::Gem::Specification.new('mruby-jsonsl') do |spec|
   spec.license = 'MIT'
-  spec.author  = 'Masayoshi Takahashi'
+  spec.author  = 'Team Yamanekko'
+  spec.version = '1.1.0'
 
   # Default build files
   # spec.rbfiles = Dir.glob("#{dir}/mrblib/*.rb")
