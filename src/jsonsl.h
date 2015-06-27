@@ -668,6 +668,17 @@ const char* jsonsl_strtype(jsonsl_type_t jt);
 JSONSL_API
 void jsonsl_dump_global_metrics(void);
 
+
+/**
+ * Utility function to implement original unescape function
+ */
+JSONSL_API
+char jsonsl_get_escape_equiv(unsigned char c);
+
+JSONSL_API
+int jsonsl_is_allowed_escape(unsigned char c);
+
+
 /* This macro just here for editors to do code folding */
 #ifndef JSONSL_NO_JPR
 

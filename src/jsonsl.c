@@ -1356,6 +1356,22 @@ static int is_allowed_escape(unsigned c) {
     return Allowed_Escapes[c & 0xff];
 }
 
+/**
+ * Utility function to implement original unescape function
+ */
+JSONSL_API
+char jsonsl_get_escape_equiv(unsigned char c)
+{
+  return get_escape_equiv(c);
+}
+
+JSONSL_API
+int jsonsl_is_allowed_escape(unsigned char c)
+{
+  return is_allowed_escape(c);
+}
+
+
 /* Clean up all our macros! */
 #undef INCR_METRIC
 #undef INCR_GENERIC
