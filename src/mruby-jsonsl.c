@@ -15,7 +15,7 @@ const static struct mrb_data_type mrb_jsonsl_type = {
 };
 
 static int MAX_DESCENT_LEVEL = 20;
-static int MAX_JSON_SIZE = 0x100;
+static int DEFAULT_MAX_JSON_SIZE = 0x100;
 
 #define MRB_JSONSL_PENDING_KEY mrb_sym2str(mrb, mrb_intern_lit(mrb, "pending_key"))
 
@@ -133,7 +133,7 @@ cleanup_closing_element(jsonsl_t jsn,
   case JSONSL_T_STRING:
     /* String */
     buf = (char *)jsn->base + state->pos_begin;
-    elem = mrb_str_new(mrb, buf+1, at - buf - 1);
+    elem = mrb_str_unescaped_utf8(mrb, buf+1, at - buf - 1, state->pos_begin+1);
     break;
   case JSONSL_T_HKEY:
     /* String as key of Hash */
@@ -141,7 +141,7 @@ cleanup_closing_element(jsonsl_t jsn,
     if (((mrb_jsonsl_data *)jsn->data)->symbol_key) {
       elem = mrb_symbol_value(mrb_intern(mrb, buf+1, at - buf - 1));
     } else {
-      elem = mrb_str_new(mrb, buf+1, at - buf - 1);
+      elem = mrb_str_unescaped_utf8(mrb, buf+1, at - buf - 1, state->pos_begin+1);
     }
     break;
   case JSONSL_T_LIST:
@@ -174,6 +174,135 @@ cleanup_closing_element(jsonsl_t jsn,
   } else {
     mrb_raise(mrb, get_jsonsl_error(mrb), "Requested to add to non-container parent type!");
   }
+}
+
+
+static uint32_t
+char2codepoint(char *p, mrb_int *err_pos)
+{
+  uint32_t num = 0;
+  char *ch = p;
+  for (; ch < p + 4; ch++) {
+    num *= 16;
+    if ('0' <= ch[0] && ch[0] <= '9') {
+      num += (int)(ch[0] - '0');
+    } else if ('a' <= ch[0] && ch[0] <= 'f') {
+      num += (int)(ch[0] - 'a' + 10);
+    } else if ('A' <= ch[0] && ch[0] <= 'F') {
+      num += (int)(ch[0] - 'A' + 10);
+    } else {
+      *err_pos = (mrb_int)(ch-p);
+      return 0;
+    }
+  }
+  *err_pos = 0;
+  return num;
+}
+
+/* from mruby/mrbgems/mruby-string-utf8/src/string.c */
+static size_t
+codepoint2utf8(uint32_t cp, char *utf8)
+{
+  size_t len;
+
+  if (cp < 0x80) {
+    utf8[0] = (char)cp;
+    len = 1;
+  }
+  else if (cp < 0x800) {
+    utf8[0] = (char)(0xC0 | (cp >> 6));
+    utf8[1] = (char)(0x80 | (cp & 0x3F));
+    len = 2;
+  }
+  else if (cp < 0x10000) {
+    utf8[0] = (char)(0xE0 |  (cp >> 12));
+    utf8[1] = (char)(0x80 | ((cp >>  6) & 0x3F));
+    utf8[2] = (char)(0x80 | ( cp        & 0x3F));
+    len = 3;
+  }
+  else {
+    utf8[0] = (char)(0xF0 |  (cp >> 18));
+    utf8[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    utf8[2] = (char)(0x80 | ((cp >>  6) & 0x3F));
+    utf8[3] = (char)(0x80 | ( cp        & 0x3F));
+    len = 4;
+  }
+  return len;
+}
+
+
+static mrb_value
+mrb_str_unescaped_utf8(mrb_state *mrb,
+                       const char *in,
+                       size_t len,
+                       mrb_int pos_begin)
+{
+  char *ch = (char *)in;
+  char *out;
+  char *origout;
+  char *end = (char *)in + len;
+  size_t origlen = len;
+  size_t ndiff = 0;
+  mrb_int err_pos;
+  char utf8[4];
+  uint32_t codepoint;
+  size_t utf8len;
+
+#define UNESCAPE_ERROR(e,offset)                \
+  mrb_raisef(mrb, get_jsonsl_error(mrb), "escape error at %S: %S", \
+             mrb_fixnum_value(pos_begin+(int)(ch - in + (ptrdiff_t)offset)), \
+             mrb_str_new_cstr(mrb, jsonsl_strerror(JSONSL_ERROR_##e)));
+
+  out = (char *)mrb_malloc(mrb, len+1);
+  origout = out;
+
+  for (; ch < end; ch++, len--) {
+    if (*ch != '\\') {
+      *out = *ch;
+      out++;
+    } else {
+      /* ch[0] == '\\' */
+      if (len < 2) { /* 2 == strlen('\\b') */
+        UNESCAPE_ERROR(ESCAPE_INVALID, 0);
+      }
+      if (!jsonsl_is_allowed_escape(ch[1])) {
+        UNESCAPE_ERROR(ESCAPE_INVALID, 1);
+      }
+      if (ch[1] != 'u') {
+        char esctmp = jsonsl_get_escape_equiv(ch[1]);
+        if (!esctmp) {
+          UNESCAPE_ERROR(ESCAPE_INVALID, 1);
+        }
+        *out = esctmp;
+        out++;
+        ndiff++;
+        continue;
+      }
+
+      /* next == 'u' */
+      if (len < 6) {
+        /* Need at least six characters:
+         * { [0]='\\', [1]='u', [2]='f', [3]='f', [4]='f', [5]='f' }
+         */
+        UNESCAPE_ERROR(UESCAPE_TOOSHORT, -1);
+      }
+      codepoint = char2codepoint(ch+2, &err_pos);
+      if (err_pos) {
+        UNESCAPE_ERROR(UESCAPE_TOOSHORT, -1);
+      }
+      if (0x10FFFF < codepoint) {
+        UNESCAPE_ERROR(ESCAPE_INVALID, -1);
+      }
+      utf8len = codepoint2utf8(codepoint, utf8);
+      len -= 5;
+      ch += 5;
+      memcpy(out, utf8, utf8len);
+      out += utf8len;
+      ndiff += (6 - utf8len);
+    }
+  }
+
+  return mrb_str_new_static(mrb, origout, origlen - ndiff);
 }
 
 int error_callback(jsonsl_t jsn,
@@ -258,7 +387,7 @@ mrb_jsonsl_init(mrb_state *mrb, mrb_value self)
 
   n = mrb_get_args(mrb, "|i", &jsonsl_size);
   if (n == 0) {
-    jsn = jsonsl_new(MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
+    jsn = jsonsl_new(DEFAULT_MAX_JSON_SIZE); /* jsonsl_new() uses calloc() */
   } else {
     jsn = jsonsl_new(jsonsl_size);
   }

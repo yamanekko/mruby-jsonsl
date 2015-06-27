@@ -36,6 +36,12 @@ error_callback(jsonsl_t jsn,
                char *at);
 
 static mrb_value
+mrb_str_unescaped_utf8(mrb_state *mrb,
+                       const char *in,
+                       size_t len,
+                       mrb_int pos_begin);
+
+static mrb_value
 mrb_jsonsl_parse(mrb_state *mrb, mrb_value self);
 
 static mrb_value

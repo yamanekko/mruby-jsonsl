@@ -16,6 +16,40 @@ end
 assert('JSONSL#parse3') do
   assert_equal({"foo"=>[1,2,3.14,"hoge",{"a"=>"b"}]}, JSONSL.new.parse('{"foo":[1,2,3.14,"hoge",{"a":"b"}]}'))
 end
+
+assert('JSONSL#parse_uescape1') do
+  assert_equal({"foo"=>"barJC"}, JSONSL.new.parse('{"foo":"bar\\u004aC"}'))
+end
+assert('JSONSL#parse_uescape2') do
+  assert_equal({"foo"=>"テスト"}, JSONSL.new.parse('{"foo":"\\u30C6\\u30B9\\u30C8"}'))
+end
+assert('JSONSL#parse_uescape2b') do
+  assert_equal({"foo"=>"abcテスト_!"}, JSONSL.new.parse('{"foo":"abc\\u30C6\\u30B9\\u30C8_!"}'))
+end
+assert('JSONSL#parse_uescape_surrogate_pair') do
+  assert_equal({"foo"=>"abc\xED\xA0\xB4\xED\xB4\x9E"}, JSONSL.new.parse('{"foo":"abc\\uD834\\uDD1E"}'))
+end
+assert('JSONSL#parse_uescape_error') do
+  assert_raise(JSONSL::Error) do
+    JSONSL.new.parse('{"foo":"\u30g6"}')
+  end
+end
+assert('JSONSL#parse_uescape_error2') do
+  assert_raise(JSONSL::Error) do
+    JSONSL.new.parse('{"foo":"\u30_6"}')
+  end
+end
+assert('JSONSL#parse_uescape_error3') do
+  assert_raise(JSONSL::Error) do
+    JSONSL.new.parse('{"foo":"abc\u306"}')
+  end
+end
+assert('JSONSL#parse_uescape_error4') do
+  assert_raise(JSONSL::Error) do
+    JSONSL.new.parse('{"foo":"abc\!"}')
+  end
+end
+
 assert('JSONSL.parse') do
   assert_equal({"foo"=>true}, JSONSL.parse('{"foo":true}'))
 end
